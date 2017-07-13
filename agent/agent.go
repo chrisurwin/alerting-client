@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/chrisurwin/alerting-agent/healthcheck"
+	"github.com/chrisurwin/alerting-client/healthcheck"
 
 	"fmt"
 

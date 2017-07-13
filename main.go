@@ -4,8 +4,9 @@ import (
 	"github.com/Sirupsen/logrus"
 	"github.com/urfave/cli"
 
-	"github.com/chrisurwin/alerting-agent/agent"
 	"os"
+
+	"github.com/chrisurwin/alerting-client/agent"
 )
 
 var VERSION = "v0.1.0-dev"
