@@ -12,9 +12,9 @@ cd $(dirname $0)/../package
 TAG=${TAG:-${VERSION}${SUFFIX}}
 REPO=${REPO:-rancher}
 
-cp ../bin/alerting-agent .
+cp ../bin/alerting-client .
 
-IMAGE=${REPO}/alerting-agent:${TAG}
+IMAGE=${REPO}/alerting-client:${TAG}
 docker build -t ${IMAGE} .
 echo ${IMAGE} > ../dist/images
 echo Built ${IMAGE}

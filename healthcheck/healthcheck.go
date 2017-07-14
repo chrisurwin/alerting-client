@@ -4,7 +4,6 @@ import (
 	"net/http"
 
 	"github.com/Sirupsen/logrus"
-
 	"github.com/gorilla/mux"
 )
 
