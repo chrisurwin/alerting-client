@@ -1,3 +1,3 @@
 FROM alpine:3.6
-COPY alerting-agent /usr/bin/
-CMD ["alerting-agent"]
+COPY alerting-client /usr/bin/
+CMD ["alerting-client"]

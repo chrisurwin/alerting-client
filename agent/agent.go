@@ -1,142 +1,99 @@
 package agent
 
 import (
-	"bytes"
-	"io/ioutil"
+	"fmt"
 	"net/http"
-	"os"
-	"strconv"
+	"sync"
 	"time"
 
+	log "github.com/Sirupsen/logrus"
+	"github.com/chrisurwin/alerting-client/alert"
 	"github.com/chrisurwin/alerting-client/healthcheck"
-
-	"fmt"
-
-	"github.com/Sirupsen/logrus"
 	"github.com/miekg/dns"
 )
 
-var (
-	serverHostname = ""
-	serverPort     = ""
-	logLevel       = ""
+const (
+	RancherEndpointDNS = "169.254.169.250:53"
 )
 
-func getenv(key, fallback string) string {
-	value := os.Getenv(key)
-	if len(value) == 0 {
-		return fallback
-	}
-	return value
+type Agent struct {
+	sync.WaitGroup
+
+	probePeriod time.Duration
+	k8s         bool
+
+	alert      *alert.AlertSender
+	dnsClient  *dns.Client
+	httpClient http.Client
+	log        *log.Entry
 }
 
-//StartAgent function to start the alerting agent
-func StartAgent(hostname string, port string, poll string, k8s string) {
+func NewAgent(alertAddress string, probePeriod time.Duration, k8s bool) *Agent {
 
-	serverHostname = hostname
-	serverPort = port
+	return &Agent{
+		probePeriod: probePeriod,
+		k8s:         k8s,
+		alert:       alert.NewSender(alertAddress, 4),
+		dnsClient:   &dns.Client{},
+		httpClient: http.Client{
+			Timeout: time.Duration(2 * time.Second),
+		},
+		log: log.WithField("pkg", "agent"),
+	}
+}
 
+func (a *Agent) Start() {
 	go healthcheck.StartHealthcheck()
-	//go startHealthcheck()
 
-	for {
-		dnsCheck("MetaData DNS", "rancher-metadata.rancher.internal")
-		httpCheck("Rancher Metadata", "http://169.254.169.250")
+	t := time.NewTicker(a.probePeriod)
+	for _ = range t.C {
+		a.log.Debug("Probing infrastructure.")
 
-		if k8s != "false" {
-			httpCheck("Kube API", "http://kubernetes.kubernetes.rancher.internal")
-			httpCheck("Etcd Health", "http://etcd.kubernetes.rancher.internal:2379/health")
+		go a.checkDNS("MetaData DNS", "rancher-metadata.rancher.internal")
+		go a.checkHTTP("Rancher Metadata", "http://169.254.169.250")
+
+		if a.k8s {
+			go a.checkHTTP("Etcd Health", "http://etcd.kubernetes.rancher.internal:2379/health")
+			go a.checkHTTP("Kube API", "http://kubernetes.kubernetes.rancher.internal")
 		}
 
-		interval, err := strconv.Atoi(poll)
-		if err != nil {
-			interval = 30
-		}
-
-		time.Sleep(time.Duration(interval) * time.Second)
+		a.Wait()
 	}
 }
 
-func dnsCheck(checkName string, target string) {
-	server := "169.254.169.250"
+func (a *Agent) checkDNS(checkName, target string) {
+	a.Add(1)
+	defer a.Done()
 
-	c := dns.Client{}
 	m := dns.Msg{}
 	m.SetQuestion(target+".", dns.TypeA)
-	r, t, err := c.Exchange(&m, server+":53")
+	r, t, err := a.dnsClient.Exchange(&m, RancherEndpointDNS)
 	if err != nil {
-		logrus.Error(err)
-		alert(checkName, err.Error())
+		a.alert.Send(alert.New(checkName, err.Error()))
 		return
 	}
 	if len(r.Answer) == 0 {
-		logrus.Error(checkName + ":No results")
+		a.log.Error(checkName + ":No results")
 	} else {
-		logrus.Info(checkName + ":" + target + " succeeded in " + t.String())
+		a.log.Info(checkName + ":" + target + " succeeded in " + t.String())
 	}
 }
 
-func httpCheck(checkName string, address string) {
-	timeout := time.Duration(2 * time.Second)
+func (a *Agent) checkHTTP(checkName, address string) {
+	a.Add(1)
+	defer a.Done()
 
-	client := http.Client{
-		Timeout: timeout,
+	resp, err := a.httpClient.Get(address)
+	if err != nil {
+		a.alert.Send(alert.New(checkName, err.Error()))
+		return
 	}
+	defer resp.Body.Close()
 
-	resp, err := client.Get(address)
-
-	if resp != nil {
-
-		if (resp.StatusCode != 200) || (err != nil) {
-			logrus.Error(checkName + ":Check failed")
-			alert(checkName, "Received the following non-200 response:"+strconv.Itoa(resp.StatusCode))
-		} else {
-			logrus.Info(checkName + " succeeded")
-		}
-		resp.Body.Close()
-	} else {
-
-		logrus.Error(checkName + ":Timeout")
-		alert(checkName, "Timeout on operation")
+	switch {
+	case resp.StatusCode < 200 || resp.StatusCode > 299:
+		a.alert.Send(alert.New(checkName, fmt.Sprintf("Expecting HTTP 2XX, received '%s'", resp.Status)))
+	default:
+		a.log.WithField("check", "success").Debugf("Received '%s'", resp.Status)
 	}
-
-}
-
-func alert(name string, description string) {
-	host, _ := os.Hostname()
-	url := "http://" + serverHostname + ":" + serverPort + "/report_alert"
-
-	if logLevel == "DEBUG" {
-		logrus.Info("URL :> " + url)
-	}
-
-	var jsonStr = []byte(`{"name": "` + name + `", "description":"` + description + `", "host": "` + host + `"}`)
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonStr))
-	req.Header.Set("Accept", "text/plain")
-	req.Header.Set("Content-Type", "application/json")
-
-	timeout := time.Duration(4 * time.Second)
-	client := http.Client{
-		Timeout: timeout,
-	}
-	resp, err := client.Do(req)
-	if resp != nil {
-		if (resp.StatusCode != 200) || (err != nil) {
-			logrus.Error("Failed to send to server")
-			if err != nil {
-				panic(err)
-			}
-		}
-		resp.Body.Close()
-	} else {
-		logrus.Info("Timeout sending to server")
-	}
-
-	if logLevel == "DEBUG" {
-		fmt.Println("response Status:", resp.Status)
-		fmt.Println("response Headers:", resp.Header)
-		body, _ := ioutil.ReadAll(resp.Body)
-		fmt.Println("response Body:", string(body))
-	}
-
 }
