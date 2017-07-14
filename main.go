@@ -43,11 +43,6 @@ func main() {
 			Value:  "localhost:5050",
 			EnvVar: "SERVER_ADDRESS",
 		},
-		cli.BoolFlag{
-			Name:   "k8s,k",
-			Usage:  "Specify if environment is a kubernetes environment",
-			EnvVar: "K8S",
-		},
 	}
 	app.Run(os.Args)
 }
@@ -56,6 +51,6 @@ func start(c *cli.Context) {
 	if c.String("alert-address") == "" {
 		log.Fatal("Alerting server address not set")
 	}
-	a := agent.NewAgent(c.String("alert-address"), c.Duration("poll-interval"), c.Bool("k8s"))
+	a := agent.NewAgent(c.String("alert-address"), c.Duration("poll-interval"))
 	a.Start()
 }

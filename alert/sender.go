@@ -3,7 +3,6 @@ package alert
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io/ioutil"
 	"net/http"
@@ -12,15 +11,15 @@ import (
 	log "github.com/Sirupsen/logrus"
 )
 
-type AlertSender struct {
+type Sender struct {
 	alertEndpoint string
 	alerts        chan *Alert
 	httpClient    http.Client
 	log           *log.Entry
 }
 
-func NewSender(alertAddress string, bufferSize int) *AlertSender {
-	s := &AlertSender{
+func NewSender(alertAddress string, bufferSize int) *Sender {
+	s := &Sender{
 		alertEndpoint: fmt.Sprintf("http://%s/report_alert", alertAddress),
 		alerts:        make(chan *Alert, bufferSize),
 		httpClient: http.Client{
@@ -32,11 +31,11 @@ func NewSender(alertAddress string, bufferSize int) *AlertSender {
 	return s
 }
 
-func (s *AlertSender) Send(a *Alert) {
+func (s *Sender) Send(a *Alert) {
 	s.alerts <- a
 }
 
-func (s *AlertSender) watch() {
+func (s *Sender) watch() {
 	for a := range s.alerts {
 		l := s.log.WithField("name", a.Name)
 		l.Debug("Received alert")
@@ -50,7 +49,7 @@ func (s *AlertSender) watch() {
 	}
 }
 
-func (s *AlertSender) send(a *Alert) error {
+func (s *Sender) send(a *Alert) error {
 	data, err := json.Marshal(a)
 	if err != nil {
 		return err
@@ -71,7 +70,7 @@ func (s *AlertSender) send(a *Alert) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		return errors.New(fmt.Sprintf("Server return HTTP %d", resp.StatusCode))
+		return fmt.Errorf("Server return HTTP %d", resp.StatusCode)
 	}
 
 	if log.GetLevel() == log.DebugLevel {
